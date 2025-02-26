@@ -1,0 +1,5 @@
+class Main : Object {
+    run [ | x := self compute: 3 and: 2 and: 5.]
+    plusOne: "<- definice metody - selektor s jedním parametrem"
+        [ :x | r := x plus: 1. ]
+}
