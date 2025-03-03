@@ -27,18 +27,18 @@ grammar = """
 
     method: (selector block)*
 
-    selector: ID | ID ":" (ID ":")*
+    selector: id | id ":" (id ":")*
 
     block: "[" block_par "|" block_stat "]"
-    block_par: (":" ID)*
-    block_stat: (ID ":=" expr ".")*
+    block_par: (":" id)*
+    block_stat: (id ":=" expr ".")*
 
     expr: expr_base expr_tail
-    expr_base: ID | cid | str_def | int_def | "(" expr ")" | block
-    expr_tail: ID | (ID ":" expr_base)*
+    expr_base: id | cid | str_def | int_def | "(" expr ")" | block
+    expr_tail: id | (id ":" expr_base)*
 
     cid: /[a-zA-Z][a-zA-Z0-9_]*/   // Uppercase for token rules
-    ID: /[a-zA-Z_][a-zA-Z0-9_]*/
+    id: /[a-zA-Z_][a-zA-Z0-9_]*/
 
     int_def : /-?\d+([eE][+-]?\d+)?/
     str_def : /\'(?:\\.|[^\\"])*\'/
@@ -50,13 +50,6 @@ grammar = """
 """
 
 class TreeToXML(Transformer):
-    def __init__(self):
-        self.assign_cnt = 1
-        self.method_cnt = 0
-        self.is_first_base = True
-        self.name = ""
-        self.parent = ""
-
     def program(self, args):
         program_element = ET.Element("program", {
             "language": "SOL25",
@@ -77,20 +70,17 @@ class TreeToXML(Transformer):
         return args[0]
     
     def id(self, args):
-        return args[0]
+        return args[0], "var"
     
     def int_def(self, args):
         return args[0], "Integer"
     
     def str_def(self, args):
-        return args[0]
+        return args[0], "String"
     
     def method(self, args):
-        class_element = ET.Element("class", {
-            "name": self.name,
-            "parent": self.parent
-        })
-        class_element.attrib
+        class_element = ET.Element("class")
+        
         i = 0
         while i+1 < len(args):
             element = ET.Element("method", {"selector": args[i]})
@@ -104,13 +94,14 @@ class TreeToXML(Transformer):
         element = ""
         state = True
         for item in args:
+            val_arg, type_arg = item
             if(element == ""):
-                element = f"{str(item)}"
+                element = f"{str(val_arg)}"
             elif(state):
-                element = f"{element}:{str(item)}:"
+                element = f"{element}:{str(val_arg)}:"
                 state = False
             else:
-                element = f"{element}{str(item)}:"
+                element = f"{element}{str(val_arg)}:"
         return element
 
     def block(self, args):
@@ -118,24 +109,31 @@ class TreeToXML(Transformer):
         element = ET.Element("block", {"arity": str(len(params))})
         i = 1
         for item in params:
-            element_param = ET.Element("parameter", {"name":str(item), "order":str(i)})
+            val_arg, type_arg = item
+            element_param = ET.Element("parameter", {"order":str(i), "name":str(val_arg)})
             element.append(element_param)
             i+=1
-        element.append(args[1])
-        self.assign_cnt = 1
+        i = 0
+        step = 1
+        args_args = args[1]
+        while i < len(args_args):
+            element_ass = ET.Element("assign", {"order": str(step)})
+            val_arg, type_arg = args_args[i]
+            element_var = ET.Element("var", {"name": str(val_arg)})
+            element_ass.append(element_var)
+            element_ass.append(args_args[i+1])
+            element.append(element_ass)
+            i+=2
+            step+=1
         return element
 
     def block_par(self, args):
         return args
     
     def block_stat(self, args):
-        element = ET.Element("assign", {"order": str(self.assign_cnt)})
-        self.assign_cnt += 1
-        element_var = ET.Element("var", {"name": str(args[0])})
-        element.append(element_var)
-        element.append(args[1])
-        return element
+        return args
 
+    # !Opravit iterovanie (nie pomocou :)
     def expr(self, args):
         element = ET.Element("expr")
         str_tail, elem_tail = args[1]
@@ -149,26 +147,30 @@ class TreeToXML(Transformer):
                 element_arg.append(elem_tail[i])
                 element_send.append(element_arg)
             i+=1
-        self.is_first_base = True
         return element
 
     def expr_base(self, args):
         element = ET.Element("expr")
-        if(self.is_first_base):
-            element_next = ET.Element("var", {"name":args[0]})
-            self.is_first_base = False
-        else:
-            value_args, type_args = args[0]
-            element_next = ET.Element("literal", {"class": type_args, "value": str(value_args)})
-        element.append(element_next)
-        return element
-
+        if(len(args[0]) > 1):
+            val_arg, type_arg = args[0]
+            if(type_arg == "var"):
+                element_next = ET.Element("var", {"name":val_arg})
+            else:
+                element_next = ET.Element("literal", {"class": type_arg, "value": str(val_arg)})
+            element.append(element_next)
+            return element
+        elif(contains_substring(str(args[0]), "Element 'block'")):
+            element.append(args[0])
+            return element
+        return args[0]
+        
     def expr_tail(self, args):
         selector_str = ""
         element = []
-        for item in args:
-            if(len(find_substring(str(item), " ")) == 0):
-                selector_str = f"{selector_str}{item}:"
+        for item in args:            
+            if(len(item) > 1):
+                val_arg, type_arg = item
+                selector_str = f"{selector_str}{val_arg}:"
             else:
                 element.append(item)
         return selector_str, element
@@ -176,6 +178,9 @@ class TreeToXML(Transformer):
 
 def find_substring(strings, substring):
     return [s for s in strings if substring in s]
+
+def contains_substring(text, substring):
+    return substring in text
 
 def main():
     if len(sys.argv) > 1:
