@@ -4,8 +4,12 @@ import xml.etree.ElementTree as ET
 from enum import Enum
 from lark import Lark, UnexpectedCharacters, UnexpectedToken, Transformer
 
+# If debug set it to True
+isdebug = False
+# If it is not set input file will be from first argument
+input_file = ""
 
-class Color(Enum):
+class Error(Enum):
     WRONGPARAM = 10, 
     INFILEERR = 11,     # We will use STDIO
     OUTFILEERR = 12,    # We will use STDIO
@@ -27,7 +31,7 @@ grammar = """
 
     method: (selector block)*
 
-    selector: id | id ":" (id ":")*
+    selector: id | id_dot (id_dot)*
 
     block: "[" block_par "|" block_stat "]"
     block_par: (":" id)*
@@ -35,10 +39,11 @@ grammar = """
 
     expr: expr_base expr_tail
     expr_base: id | cid | str_def | int_def | "(" expr ")" | block
-    expr_tail: id | (id ":" expr_base)*
+    expr_tail: id | (id_dot expr_base)*
 
     cid: /[a-zA-Z][a-zA-Z0-9_]*/   // Uppercase for token rules
     id: /[a-zA-Z_][a-zA-Z0-9_]*/
+    id_dot:/[a-zA-Z_][a-zA-Z0-9_]*:/
 
     int_def : /-?\d+([eE][+-]?\d+)?/
     str_def : /\'(?:\\.|[^\\"])*\'/
@@ -48,6 +53,15 @@ grammar = """
     %ignore COMMENT
     %ignore WS
 """
+
+class Debug:
+    def __init__(self, value, in_file):
+        self.debug = value
+        self.input_file = in_file 
+    def read_from_input_file(self):
+        with open(self.input_file, "r") as filein:
+            data = filein.read()  # Displays the parse tree
+        return data
 
 class TreeToXML(Transformer):
     def program(self, args):
@@ -70,7 +84,10 @@ class TreeToXML(Transformer):
         return args[0]
     
     def id(self, args):
-        return args[0], "var"
+        return args[0], "identifier"
+    
+    def id_dot(self, args):
+        return args[0], "identifier"
     
     def int_def(self, args):
         return args[0], "Integer"
@@ -92,16 +109,9 @@ class TreeToXML(Transformer):
     
     def selector(self, args):
         element = ""
-        state = True
         for item in args:
             val_arg, type_arg = item
-            if(element == ""):
-                element = f"{str(val_arg)}"
-            elif(state):
-                element = f"{element}:{str(val_arg)}:"
-                state = False
-            else:
-                element = f"{element}{str(val_arg)}:"
+            element = f"{element}{str(val_arg)}"
         return element
 
     def block(self, args):
@@ -133,7 +143,6 @@ class TreeToXML(Transformer):
     def block_stat(self, args):
         return args
 
-    # !Opravit iterovanie (nie pomocou :)
     def expr(self, args):
         element = ET.Element("expr")
         str_tail, elem_tail = args[1]
@@ -141,11 +150,10 @@ class TreeToXML(Transformer):
         element.append(element_send)
         element_send.append(args[0])
         i = 0
-        while i < len(find_substring(str_tail, ":")):
+        while i < len(elem_tail):
             element_arg = ET.Element("arg", {"order": str(i+1)})
-            if(len(elem_tail)>0):
-                element_arg.append(elem_tail[i])
-                element_send.append(element_arg)
+            element_arg.append(elem_tail[i])
+            element_send.append(element_arg)
             i+=1
         return element
 
@@ -153,7 +161,7 @@ class TreeToXML(Transformer):
         element = ET.Element("expr")
         if(len(args[0]) > 1):
             val_arg, type_arg = args[0]
-            if(type_arg == "var"):
+            if(type_arg == "identifier"):
                 element_next = ET.Element("var", {"name":val_arg})
             else:
                 element_next = ET.Element("literal", {"class": type_arg, "value": str(val_arg)})
@@ -170,27 +178,45 @@ class TreeToXML(Transformer):
         for item in args:            
             if(len(item) > 1):
                 val_arg, type_arg = item
-                selector_str = f"{selector_str}{val_arg}:"
+                selector_str = f"{selector_str}{val_arg}"
             else:
                 element.append(item)
         return selector_str, element
 
-
-def find_substring(strings, substring):
-    return [s for s in strings if substring in s]
-
 def contains_substring(text, substring):
     return substring in text
 
-def main():
-    if len(sys.argv) > 1:
-        sys.stderr.write("- chybejici parametr skriptu (je-li treba) nebo použiti zakazane kombinace parametru\n")
-        sys.exit(Color.WRONGPARAM.value)
+def print_err_by_errnum(value):
+    match value:
+        case Error.WRONGPARAM.value:
+            sys.stderr.write("- chybejici parametr skriptu (je-li treba) nebo použiti zakazane kombinace parametru\n")
+            return
+        case 2:
+            sys.stderr.write("- lexikalni chyba ve zdrojovem kodu v SOL25\n")
+            return
+        case 3:
+            sys.stderr.write("- syntakticka chyba ve zdrojovem kodu v SOL25\n")
+            return
+        case 4:
+            sys.stderr.write("- interni chyba (neovlivnena integraci, vstupnimi soubory ci parametry prikazove radky)\n")
+            return
+        case _:
+            return
 
-    # ! USE stdin
-    data = sys.stdin.read()  # Read all input
-    # with open("./INPUTS/Atomic/5.SOL25", "r") as filein:
-    #     data = filein.read()  # Displays the parse tree
+def main():
+    global isdebug
+    global input_file
+    
+    if ((len(sys.argv) > 1) & (isdebug == False)):
+        print_err_by_errnum(Error.WRONGPARAM.value)
+        sys.exit(Error.WRONGPARAM.value)
+    elif (isdebug):
+        if(input_file == ""):
+            input_file = sys.argv[1]
+        debug = Debug(isdebug, input_file)
+        data = debug.read_from_input_file()
+    else:
+        data = sys.stdin.read()  # Read all input
 
     # Create the parser
     parser = Lark(grammar, parser="lalr")
@@ -198,32 +224,33 @@ def main():
     try:
         tree = parser.parse(data)
     except UnexpectedCharacters:
-        sys.stderr.write("- lexikalni chyba ve zdrojovem kodu v SOL25\n")
-        sys.exit(Color.LEXERR.value)
+        print_err_by_errnum(Error.LEXERR.value)
+        sys.exit(Error.LEXERR.value)
     except UnexpectedToken:
-        sys.stderr.write("- syntakticka chyba ve zdrojovem kodu v SOL25\n")
-        sys.exit(Color.SYNTERR.value)
+        print_err_by_errnum(Error.SYNTERR.value)
+        sys.exit(Error.SYNTERR.value)
     except:
-        sys.stderr.write("- interni chyba (neovlivnena integraci, vstupnimi soubory ci parametry prikazove radky)\n")
-        sys.exit(Color.INTERNERR.value)
+        print_err_by_errnum(Error.INTERNERR.value)
+        sys.exit(Error.INTERNERR.value)
 
-    # ! OUTPUT stream into file need to be removed  
-    with open("./OUTPUTS/2.txt", "w") as file:
-        file.write(tree.pretty())  # Displays the parse tree
-
-    # ! EXCEPTION handler
+    # Helps to have overview over the AST
+    if(isdebug):
+        with open("./OUTPUTS/2.txt", "w") as file:
+            file.write(tree.pretty())  # Displays the parse tree
+        transformer = TreeToXML()
+        xml_tree = transformer.transform(tree)
+        xml_str = ET.tostring(xml_tree, encoding="unicode")
     # Transform AST into XML
-    transformer = TreeToXML()
-    xml_tree = transformer.transform(tree)
-    xml_str = ET.tostring(xml_tree, encoding="unicode")
-    # try:
-    #     xml_tree = transformer.transform(tree)
-    #     xml_str = ET.tostring(xml_tree, encoding="unicode")
-    # except:
-    #     sys.stderr.write("- interni chyba (neovlivnena integraci, vstupnimi soubory ci parametry prikazove radky)\n")
-    #     sys.exit(Color.INTERNERR.value)
+    else:
+        try:
+            transformer = TreeToXML()
+            xml_tree = transformer.transform(tree)
+            xml_str = ET.tostring(xml_tree, encoding="unicode")
+        except:
+            print_err_by_errnum(Error.INTERNERR.value)
+            sys.exit(Error.INTERNERR.value)
 
-    # Print XML
+    # Print XML into stdio
     print(xml_str)
 
 if __name__ == "__main__":
