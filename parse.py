@@ -23,34 +23,39 @@ grammar = """
 
     program: class_def*  // Allows multiple class definitions
 
-    class_def: "class" CID ":" CID "{" method "}"
+    class_def: "class" cid ":" cid "{" method "}"
 
-    method: ((ID | ID ":" (ID ":")*) block)*
+    method: (selector block)*
 
-    block: "[" (":" ID)* "|" block_stat "]"
+    selector: ID | ID ":" (ID ":")*
 
+    block: "[" block_par "|" block_stat "]"
+    block_par: (":" ID)*
     block_stat: (ID ":=" expr ".")*
 
-    expr: (ID | CID | STR | int | "(" expr ")" | block) expr_tail
-    expr_tail: ID | (ID ":" (ID | CID | STR | int | "(" expr ")" | block))*
+    expr: expr_base expr_tail
+    expr_base: ID | cid | str_def | int_def | "(" expr ")" | block
+    expr_tail: ID | (ID ":" expr_base)*
 
-    CID: /[a-zA-Z][a-zA-Z0-9_]*/   // Uppercase for token rules
+    cid: /[a-zA-Z][a-zA-Z0-9_]*/   // Uppercase for token rules
     ID: /[a-zA-Z_][a-zA-Z0-9_]*/
 
-    int : /-?\d+([eE][+-]?\d+)?/
+    int_def : /-?\d+([eE][+-]?\d+)?/
+    str_def : /\'(?:\\.|[^\\"])*\'/
     COMMENT: /\"(?:\\.|[^\\"])*\"/s
 
-    %import common.ESCAPED_STRING -> STR
     %import common.WS
     %ignore COMMENT
     %ignore WS
 """
 
-# ! Upravenie stringu aby bolo v AST strome 
-
 class TreeToXML(Transformer):
     def __init__(self):
         self.assign_cnt = 1
+        self.method_cnt = 0
+        self.is_first_base = True
+        self.name = ""
+        self.parent = ""
 
     def program(self, args):
         program_element = ET.Element("program", {
@@ -61,81 +66,113 @@ class TreeToXML(Transformer):
         return program_element
 
     def class_def(self, args):
-        class_element = ET.Element("class", {
-            "name": args[0],  # Extract class name
+        class_element = args[2] 
+        class_element.attrib = {
+            "name": args[0],
             "parent": args[1]
-        })
-        class_element.append(args[2])  # Add the <method> element
+        }
         return class_element
+
+    def cid(self, args):
+        return args[0]
+    
+    def id(self, args):
+        return args[0]
+    
+    def int_def(self, args):
+        return args[0], "Integer"
+    
+    def str_def(self, args):
+        return args[0]
     
     def method(self, args):
-        element = ET.Element("method", {"selector": args[0]})
-        element.append(args[1])
+        class_element = ET.Element("class", {
+            "name": self.name,
+            "parent": self.parent
+        })
+        class_element.attrib
+        i = 0
+        while i+1 < len(args):
+            element = ET.Element("method", {"selector": args[i]})
+            element.append(args[i+1])
+            i+=2
+            class_element.append(element)
+            
+        return class_element
+    
+    def selector(self, args):
+        element = ""
+        state = True
+        for item in args:
+            if(element == ""):
+                element = f"{str(item)}"
+            elif(state):
+                element = f"{element}:{str(item)}:"
+                state = False
+            else:
+                element = f"{element}{str(item)}:"
         return element
 
     def block(self, args):
+        params = args[0]
+        element = ET.Element("block", {"arity": str(len(params))})
+        i = 1
+        for item in params:
+            element_param = ET.Element("parameter", {"name":str(item), "order":str(i)})
+            element.append(element_param)
+            i+=1
+        element.append(args[1])
         self.assign_cnt = 1
-        element = ET.Element("block", {"arity": str(len(args)-1)})
-        element.append(args[len(args)-1])
         return element
+
+    def block_par(self, args):
+        return args
     
     def block_stat(self, args):
-        i = 0
-        while i < len(args):
-            element_ass = ET.Element("assign", {"order":  str(self.assign_cnt)})
-            self.assign_cnt += 1
-
-            element_var = ET.Element("var", {"order":  str(args[i])})
-            element_exp = ET.Element("expr")
-
-            element_ass.append(element_var)
-            element_ass.append(element_exp)
-            element_exp.append(args[i+1])
-            i+=2
-        
-        return element_ass
-    
-    def expr(self, args):
-
-        selectors = []
-        literals_type = []
-        literals_val = []
-        for item in args[1].children:
-            tmp = str(item)
-            if(len(find_substring(tmp, " ")) == 0):
-                if(len(selectors) == 0):
-                    selectors = f"{str(tmp)}:"
-                else:
-                    selectors = f"{selectors}{str(tmp)}:"
-            else:
-                literals_type.append(str(item.data.value))
-                literals_val.append(str(item.children[0].value))
-        
-        element = ET.Element("send", {"selector": str(selectors)})
-
-        element_exp = ET.Element("expr")
-        element.append(element_exp)
-
-        element_base = ET.Element("var", {"name": args[0]})
-        element_exp.append(element_base)
-
-        cnt = 1
-        for type in literals_type:
-            elem_arg = ET.Element("arg", {"order": str(cnt)})
-            element.append(elem_arg)
-            elem_exp = ET.Element("expr")
-            elem_arg.append(elem_exp)
-            elem_lit = ET.Element("literal", {"class": literal_type_convert_to_XML(type), "value": literals_val[cnt-1]})
-            elem_exp.append(elem_lit)
-            cnt += 1
-
+        element = ET.Element("assign", {"order": str(self.assign_cnt)})
+        self.assign_cnt += 1
+        element_var = ET.Element("var", {"name": str(args[0])})
+        element.append(element_var)
+        element.append(args[1])
         return element
 
-def literal_type_convert_to_XML(type):
-    if(type == "int"):
-        return "Integer"
-    
-    return "UndefType"
+    def expr(self, args):
+        element = ET.Element("expr")
+        str_tail, elem_tail = args[1]
+        element_send = ET.Element("send", {"selector": str_tail})
+        element.append(element_send)
+        element_send.append(args[0])
+        i = 0
+        while i < len(find_substring(str_tail, ":")):
+            element_arg = ET.Element("arg", {"order": str(i+1)})
+            if(len(elem_tail)>0):
+                element_arg.append(elem_tail[i])
+                element_send.append(element_arg)
+            i+=1
+        self.is_first_base = True
+        return element
+
+    def expr_base(self, args):
+        element = ET.Element("expr")
+        if(self.is_first_base):
+            element_next = ET.Element("var", {"name":args[0]})
+            self.is_first_base = False
+        else:
+            value_args, type_args = args[0]
+            element_next = ET.Element("literal", {"class": type_args, "value": str(value_args)})
+        element.append(element_next)
+        return element
+
+    def expr_tail(self, args):
+        selector_str = ""
+        element = []
+        for item in args:
+            if(len(find_substring(str(item), " ")) == 0):
+                selector_str = f"{selector_str}{item}:"
+            else:
+                element.append(item)
+        return selector_str, element
+
 
 def find_substring(strings, substring):
     return [s for s in strings if substring in s]
@@ -145,7 +182,10 @@ def main():
         sys.stderr.write("- chybejici parametr skriptu (je-li treba) nebo použiti zakazane kombinace parametru\n")
         sys.exit(Color.WRONGPARAM.value)
 
+    # ! USE stdin
     data = sys.stdin.read()  # Read all input
+    # with open("./INPUTS/Atomic/5.SOL25", "r") as filein:
+    #     data = filein.read()  # Displays the parse tree
 
     # Create the parser
     parser = Lark(grammar, parser="lalr")
@@ -166,14 +206,17 @@ def main():
     with open("./OUTPUTS/2.txt", "w") as file:
         file.write(tree.pretty())  # Displays the parse tree
 
+    # ! EXCEPTION handler
     # Transform AST into XML
     transformer = TreeToXML()
-    try:
-        xml_tree = transformer.transform(tree)
-        xml_str = ET.tostring(xml_tree, encoding="unicode")
-    except:
-        sys.stderr.write("- interni chyba (neovlivnena integraci, vstupnimi soubory ci parametry prikazove radky)\n")
-        sys.exit(Color.INTERNERR.value)
+    xml_tree = transformer.transform(tree)
+    xml_str = ET.tostring(xml_tree, encoding="unicode")
+    # try:
+    #     xml_tree = transformer.transform(tree)
+    #     xml_str = ET.tostring(xml_tree, encoding="unicode")
+    # except:
+    #     sys.stderr.write("- interni chyba (neovlivnena integraci, vstupnimi soubory ci parametry prikazove radky)\n")
+    #     sys.exit(Color.INTERNERR.value)
 
     # Print XML
     print(xml_str)
