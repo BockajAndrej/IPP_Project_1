@@ -2,25 +2,14 @@ import sys
 import xml.etree.ElementTree as ET
 
 from enum import Enum
-from lark import Lark, UnexpectedCharacters, UnexpectedToken, Transformer
+from lark import Lark, UnexpectedCharacters, UnexpectedToken, Transformer, Visitor
 
 # If debug set it to True
 isdebug = False
 # If it is not set input file will be from first argument
 input_file = ""
 
-class Error(Enum):
-    WRONGPARAM = 10, 
-    INFILEERR = 11,     # We will use STDIO
-    OUTFILEERR = 12,    # We will use STDIO
-    LEXERR = 21,
-    SYNTERR = 22,
-    SEMERRMAIN = 31,
-    SEMERRUNDEF = 32,
-    SEMERRARIT = 33,
-    SEMERRCOLLISION = 34,
-    SEMERR = 35,
-    INTERNERR = 99
+KEYWORDS = {"super", "nil", "class", "self", "true", "false", "main", "Main"}
 
 grammar = """
     ?start: program
@@ -41,7 +30,7 @@ grammar = """
     expr_base: id | cid | str_def | int_def | "(" expr ")" | block
     expr_tail: id | (id_dot expr_base)*
 
-    cid: /[a-zA-Z][a-zA-Z0-9_]*/   // Uppercase for token rules
+    cid: /[a-zA-Z][a-zA-Z0-9_]*/ 
     id: /[a-zA-Z_][a-zA-Z0-9_]*/
     id_dot:/[a-zA-Z_][a-zA-Z0-9_]*:/
 
@@ -54,6 +43,19 @@ grammar = """
     %ignore WS
 """
 
+class Error(Enum):
+    WRONGPARAM = 10
+    INFILEERR = 11     # We will use STDIO
+    OUTFILEERR = 12    # We will use STDIO
+    LEXERR = 21
+    SYNTERR = 22
+    SEMERRMAIN = 31
+    SEMERRUNDEF = 32
+    SEMERRARIT = 33
+    SEMERRCOLLISION = 34
+    SEMERR = 35
+    INTERNERR = 99
+
 class Debug:
     def __init__(self, value, in_file):
         self.debug = value
@@ -64,6 +66,7 @@ class Debug:
         return data
 
 class TreeToXML(Transformer):
+    
     def program(self, args):
         program_element = ET.Element("program", {
             "language": "SOL25",
@@ -115,6 +118,7 @@ class TreeToXML(Transformer):
         return element
 
     def block(self, args):
+        self.is_in_block = True
         params = args[0]
         element = ET.Element("block", {"arity": str(len(params))})
         i = 1
@@ -135,6 +139,7 @@ class TreeToXML(Transformer):
             element.append(element_ass)
             i+=2
             step+=1
+        self.is_in_block = False
         return element
 
     def block_par(self, args):
@@ -191,32 +196,52 @@ def print_err_by_errnum(value):
         case Error.WRONGPARAM.value:
             sys.stderr.write("- chybejici parametr skriptu (je-li treba) nebo použiti zakazane kombinace parametru\n")
             return
-        case 2:
+        case Error.LEXERR.value:
             sys.stderr.write("- lexikalni chyba ve zdrojovem kodu v SOL25\n")
             return
-        case 3:
+        case Error.SYNTERR.value:
             sys.stderr.write("- syntakticka chyba ve zdrojovem kodu v SOL25\n")
             return
-        case 4:
+        case Error.INTERNERR.value:
             sys.stderr.write("- interni chyba (neovlivnena integraci, vstupnimi soubory ci parametry prikazove radky)\n")
             return
         case _:
+            sys.stderr.write("- not defined err print)\n")
             return
+
+def print_helping_guide():
+    print("Printed helping guides")
+
+# Rekurzívna funkcia na prechod stromom
+def traverse(element):
+    # print(f"{element.tag}: {element.attrib}")
+    if((element.tag == "method") or (element.tag == "send") or (element.tag == "parameter") or (element.tag == "literal")):
+        if element.attrib['selector'] in KEYWORDS :
+            raise UnexpectedToken("ERROR")
+    for child in element:
+        traverse(child)
 
 def main():
     global isdebug
     global input_file
     
-    if ((len(sys.argv) > 1) & (isdebug == False)):
-        print_err_by_errnum(Error.WRONGPARAM.value)
-        sys.exit(Error.WRONGPARAM.value)
-    elif (isdebug):
+    if (isdebug):
         if(input_file == ""):
             input_file = sys.argv[1]
         debug = Debug(isdebug, input_file)
         data = debug.read_from_input_file()
-    else:
+    elif(len(sys.argv) == 1):
         data = sys.stdin.read()  # Read all input
+    elif (len(sys.argv) == 2):
+        if (sys.argv[1] == "--help" or sys.argv[1] == "-h"):
+            print_helping_guide()
+            sys.exit(0)
+        else:
+            print_err_by_errnum(Error.WRONGPARAM.value)
+            sys.exit(Error.WRONGPARAM.value)
+    else:
+        print_err_by_errnum(Error.WRONGPARAM.value)
+        sys.exit(Error.WRONGPARAM.value)
 
     # Create the parser
     parser = Lark(grammar, parser="lalr")
@@ -246,10 +271,16 @@ def main():
             transformer = TreeToXML()
             xml_tree = transformer.transform(tree)
             xml_str = ET.tostring(xml_tree, encoding="unicode")
-        except:
-            print_err_by_errnum(Error.INTERNERR.value)
-            sys.exit(Error.INTERNERR.value)
-
+        except :
+            print_err_by_errnum(Error.SYNTERR.value)
+            sys.exit(Error.SYNTERR.value)
+    
+    try:
+        traverse(xml_tree)
+    except:
+        print_err_by_errnum(Error.SYNTERR.value)
+        sys.exit(Error.SYNTERR.value)
+    
     # Print XML into stdio
     print(xml_str)
 

@@ -1,6 +1,7 @@
 # Define Python version and virtual environment
 PYTHON=python3.11
 VENV=myvenv
+TESTVENT=.venv
 
 # Define source files (optional, useful for linting or testing)
 SRC=parse.py
@@ -23,5 +24,19 @@ o:
 
 # Run tests (if applicable)
 test:
-	$(VENV)/bin/pytest tests/
+	. ./tests/.venv/bin/activate && pytest ./tests
+test_arg:
+	. ./tests/.venv/bin/activate && pytest ./tests/test_args.py
+
+test_lex:
+	. ./tests/.venv/bin/activate && pytest ./tests/test_lex.py
+
+test_syn:
+	. ./tests/.venv/bin/activate && pytest ./tests/test_syntax.py
+
+test_sem:
+	. ./tests/.venv/bin/activate && pytest ./tests/test_sem.py
+
+test_val:
+	. ./tests/.venv/bin/activate && pytest ./tests/test_valid.py
 
