@@ -42,6 +42,23 @@ grammar = """
     %ignore COMMENT
     %ignore WS
 """
+grammar_comment = """ 
+    start: comment*
+
+    comment: /"([^"\\\\]|\\\\.)*"/  // Match text inside double quotes
+
+    %ignore /[^"]+/  // Ignore everything except double quotes
+    %ignore " "  // Ignore spaces
+    %ignore "\\n"  // Ignore newlines
+"""
+
+class SemanticException(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+
+class SyntacticException(Exception):
+    def __init__(self, message):
+        super().__init__(message)
 
 class Error(Enum):
     WRONGPARAM = 10
@@ -67,13 +84,22 @@ class Debug:
 
 class TreeToXML(Transformer):
     
+    def __init__(self, description = ""):
+        if(len(description) > 2):
+            self.description = description[1:-1]
+        else:
+            self.description = description
+    
     def program(self, args):
-        program_element = ET.Element("program", {
+        element = ET.Element("program", {
             "language": "SOL25",
-            "description": "- definice metody - bezparametrický selektor run"
         })
-        program_element.append(args[0])  # Add the <class> element
-        return program_element
+        if(self.description != ""):
+                element.attrib={"language": "SOL25", "description": str(self.description)}
+                
+        for item in args:
+            element.append(item)  
+        return element
 
     def class_def(self, args):
         class_element = args[2] 
@@ -87,6 +113,12 @@ class TreeToXML(Transformer):
         return args[0]
     
     def id(self, args):
+        if(str(args[0]) == "nil"):
+            return args[0], "Nil"
+        elif(str(args[0]) == "true"):
+            return args[0], "True"
+        elif(str(args[0]) == "false"):
+            return args[0], "False"
         return args[0], "identifier"
     
     def id_dot(self, args):
@@ -96,7 +128,9 @@ class TreeToXML(Transformer):
         return args[0], "Integer"
     
     def str_def(self, args):
-        return args[0], "String"
+        str_args = args[0]
+        str_args = str_args[1:-1]
+        return str_args, "String"
     
     def method(self, args):
         class_element = ET.Element("class")
@@ -151,30 +185,43 @@ class TreeToXML(Transformer):
     def expr(self, args):
         element = ET.Element("expr")
         str_tail, elem_tail = args[1]
-        element_send = ET.Element("send", {"selector": str_tail})
-        element.append(element_send)
-        element_send.append(args[0])
+        if(str_tail != ""):
+            element_send = ET.Element("send", {"selector": str_tail})
+            specific_args = args[0]
+            if(contains_substring(str(specific_args), "<Element 'expr'")):
+                element_send.append(specific_args)
+            else:
+                element_expr = ET.Element("expr")
+                element_expr.append(specific_args)
+                element_send.append(element_expr)
+            element.append(element_send)
+        else:
+            element.append(args[0])
         i = 0
         while i < len(elem_tail):
             element_arg = ET.Element("arg", {"order": str(i+1)})
-            element_arg.append(elem_tail[i])
-            element_send.append(element_arg)
+            specific_elem_tail = elem_tail[i]
+            if(contains_substring(str(specific_elem_tail), "<Element 'expr'")):
+                element_arg.append(specific_elem_tail)
+            else:
+                element_expr = ET.Element("expr")
+                element_expr.append(specific_elem_tail)
+                element_arg.append(element_expr)
+            if(str_tail != ""):
+                element_send.append(element_arg)
+            else:
+                element.append(element_arg)
             i+=1
         return element
 
     def expr_base(self, args):
-        element = ET.Element("expr")
         if(len(args[0]) > 1):
             val_arg, type_arg = args[0]
             if(type_arg == "identifier"):
                 element_next = ET.Element("var", {"name":val_arg})
             else:
                 element_next = ET.Element("literal", {"class": type_arg, "value": str(val_arg)})
-            element.append(element_next)
-            return element
-        elif(contains_substring(str(args[0]), "Element 'block'")):
-            element.append(args[0])
-            return element
+            return element_next
         return args[0]
         
     def expr_tail(self, args):
@@ -188,6 +235,51 @@ class TreeToXML(Transformer):
                 element.append(item)
         return selector_str, element
 
+class CommentTree(Transformer):
+    def start(self, args):
+        return args[0]
+
+    def comment(self, args):
+        return args[0]
+
+class Visitor_xml:
+    def __init__(self):
+        self.isInsideSend = False
+        self.isMain = False
+        self.isRun = False
+        
+    def traverse(self, element):
+        self.atribut_name = ""
+        # print(f"{element.tag}: {element.attrib}")
+        if(element.tag == "class"):
+            if(element.attrib['name'] == "Main"):
+                if(self.isMain):
+                    raise SemanticException("More than one Main class")
+                self.isMain = True
+        if(element.tag == "assign"):
+            self.isInsideSend = False
+        elif(element.tag == "send"):
+            self.isInsideSend = True
+            self.atribut_name = element.attrib['selector'] 
+        elif(element.tag == "method"):
+            if(element.attrib['selector'] == "run"):
+                self.isRun = True
+            self.atribut_name = element.attrib['selector'] 
+        elif(element.tag == "parameter"):
+            self.atribut_name = element.attrib['name'] 
+        elif(element.tag == "literal"):
+            if(element.attrib['value'] != "nil" and element.attrib['value'] != "false" and element.attrib['value'] != "true"):
+                self.atribut_name = element.attrib['value'] 
+        elif(element.tag == "var"):
+            if(((element.attrib['name'] == "self") and (self.isInsideSend == False)) or (element.attrib['name'] != "self")):
+                self.atribut_name = element.attrib['name'] 
+        
+        if self.atribut_name in KEYWORDS :
+            raise SyntacticException("ERROR")
+        
+        for child in element:
+            self.traverse(child)
+
 def contains_substring(text, substring):
     return substring in text
 
@@ -195,31 +287,22 @@ def print_err_by_errnum(value):
     match value:
         case Error.WRONGPARAM.value:
             sys.stderr.write("- chybejici parametr skriptu (je-li treba) nebo použiti zakazane kombinace parametru\n")
-            return
+            return value
         case Error.LEXERR.value:
             sys.stderr.write("- lexikalni chyba ve zdrojovem kodu v SOL25\n")
-            return
-        case Error.SYNTERR.value:
+            return value
+        case Error.SEMERRMAIN.value | Error.SEMERRUNDEF.value | Error.SEMERRARIT.value | Error.SEMERRCOLLISION.value | Error.SEMERR.value:
             sys.stderr.write("- syntakticka chyba ve zdrojovem kodu v SOL25\n")
-            return
+            return value
         case Error.INTERNERR.value:
             sys.stderr.write("- interni chyba (neovlivnena integraci, vstupnimi soubory ci parametry prikazove radky)\n")
-            return
+            return value
         case _:
             sys.stderr.write("- not defined err print)\n")
-            return
+            return value
 
 def print_helping_guide():
     print("Printed helping guides")
-
-# Rekurzívna funkcia na prechod stromom
-def traverse(element):
-    # print(f"{element.tag}: {element.attrib}")
-    if((element.tag == "method") or (element.tag == "send") or (element.tag == "parameter") or (element.tag == "literal")):
-        if element.attrib['selector'] in KEYWORDS :
-            raise UnexpectedToken("ERROR")
-    for child in element:
-        traverse(child)
 
 def main():
     global isdebug
@@ -237,50 +320,55 @@ def main():
             print_helping_guide()
             sys.exit(0)
         else:
-            print_err_by_errnum(Error.WRONGPARAM.value)
-            sys.exit(Error.WRONGPARAM.value)
+            sys.exit(print_err_by_errnum(Error.WRONGPARAM.value)) 
+            
     else:
-        print_err_by_errnum(Error.WRONGPARAM.value)
-        sys.exit(Error.WRONGPARAM.value)
+        sys.exit(print_err_by_errnum(Error.WRONGPARAM.value))
 
     # Create the parser
     parser = Lark(grammar, parser="lalr")
+    parser_comment = Lark(grammar_comment, parser="lalr")
 
     try:
         tree = parser.parse(data)
+        tree_comment = parser_comment.parse(data)
     except UnexpectedCharacters:
-        print_err_by_errnum(Error.LEXERR.value)
-        sys.exit(Error.LEXERR.value)
+        sys.exit(print_err_by_errnum(Error.LEXERR.value))
     except UnexpectedToken:
-        print_err_by_errnum(Error.SYNTERR.value)
-        sys.exit(Error.SYNTERR.value)
+        sys.exit(print_err_by_errnum(Error.SYNTERR.value))
     except:
-        print_err_by_errnum(Error.INTERNERR.value)
-        sys.exit(Error.INTERNERR.value)
+        sys.exit(print_err_by_errnum(Error.INTERNERR.value))
 
     # Helps to have overview over the AST
     if(isdebug):
         with open("./OUTPUTS/2.txt", "w") as file:
-            file.write(tree.pretty())  # Displays the parse tree
-        transformer = TreeToXML()
+            file.write(tree_comment.pretty() + "\n")
+            file.write("--------------//----------------\n")
+            file.write(tree.pretty())
+    # Transform AST into XML
+    try:
+        comment_transformer = CommentTree()
+        try:
+            first_comment = str(comment_transformer.transform(tree_comment))
+        except:
+            first_comment = ""
+        
+        transformer = TreeToXML(first_comment)
         xml_tree = transformer.transform(tree)
         xml_str = ET.tostring(xml_tree, encoding="unicode")
-    # Transform AST into XML
-    else:
-        try:
-            transformer = TreeToXML()
-            xml_tree = transformer.transform(tree)
-            xml_str = ET.tostring(xml_tree, encoding="unicode")
-        except :
-            print_err_by_errnum(Error.SYNTERR.value)
-            sys.exit(Error.SYNTERR.value)
-    
-    try:
-        traverse(xml_tree)
-    except:
-        print_err_by_errnum(Error.SYNTERR.value)
-        sys.exit(Error.SYNTERR.value)
-    
+        
+        visitor = Visitor_xml()
+            
+        visitor.traverse(xml_tree)
+        if((visitor.isMain == False) or (visitor.isRun == False)):
+            sys.exit(print_err_by_errnum(Error.SEMERRMAIN.value))
+    except SyntacticException:
+        sys.exit(print_err_by_errnum(Error.SYNTERR.value))
+    except SemanticException:
+        sys.exit(print_err_by_errnum(Error.SEMERR.value))
+    # except :
+    #     sys.exit(print_err_by_errnum(Error.INTERNERR.value) 
+        
     # Print XML into stdio
     print(xml_str)
 
