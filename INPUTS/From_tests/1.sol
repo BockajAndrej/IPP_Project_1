@@ -1,7 +1,3 @@
-class Str : String {}
-        class Main : Object {
-            run [|
-                x := Str2 read.  
-            ]
-        }
-        class Str2 : Str {}
+class Main : Object {run [|]}
+        class Main2 : Object {run3 [|]
+            run4 [|]}

@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ET
 
 from enum import Enum
 from lark import Lark, UnexpectedCharacters, UnexpectedToken, Transformer, Visitor
+from collections import defaultdict
 
 # If debug set it to True
 isdebug = False
@@ -10,6 +11,9 @@ isdebug = False
 input_file = ""
 
 KEYWORDS = {"super", "nil", "class", "self", "true", "false", "main", "Main"}
+CLASS_ID = {"Object", "Nil", "True", "False", "Integer", "String", "Block"}
+
+methodsInClass = defaultdict(list)
 
 grammar = """
     ?start: program
@@ -35,7 +39,7 @@ grammar = """
     id_dot:/[a-zA-Z_][a-zA-Z0-9_]*:/
 
     int_def : /-?\d+([eE][+-]?\d+)?/
-    str_def : /\'(?:\\.|[^\\"])*\'/
+    str_def : /\'(?:.)*\'/
     COMMENT: /\"(?:\\.|[^\\"])*\"/s
 
     %import common.WS
@@ -119,6 +123,8 @@ class TreeToXML(Transformer):
             return args[0], "True"
         elif(str(args[0]) == "false"):
             return args[0], "False"
+        elif(args[0] in CLASS_ID):
+            return args[0], "class"
         return args[0], "identifier"
     
     def id_dot(self, args):
@@ -242,30 +248,62 @@ class CommentTree(Transformer):
     def comment(self, args):
         return args[0]
 
+class PrintVisitor(Visitor):        
+    def class_def(self, tree):
+        self.LastNameOfClass = str(tree.children[0].children[0].value)
+        CLASS_ID.add(self.LastNameOfClass)
+        i = 0
+        while i < int(len(tree.children[2].children)):
+            iter = 1
+            sel_str = tree.children[2].children[i].children[0].children[0].value
+            while iter < len(tree.children[2].children[i].children):
+                sel_str = f"{sel_str}{tree.children[2].children[i].children[iter].children[0].value}"
+                iter+=1
+            methodsInClass[self.LastNameOfClass].append(sel_str)
+            i+=2
+        
 class Visitor_xml:
     def __init__(self):
         self.isInsideSend = False
         self.isMain = False
         self.isRun = False
         
+        self.LastNameOfClass = ""
+        
+        self.defined_vars = []
+        self.isEnableToDefVar = False
+        
+        # There is no one error
+        self.errNum = 0
+        
     def traverse(self, element):
         self.atribut_name = ""
-        # print(f"{element.tag}: {element.attrib}")
+        # print(f"Element = {element.tag}")
         if(element.tag == "class"):
-            if(element.attrib['name'] == "Main"):
-                if(self.isMain):
-                    raise SemanticException("More than one Main class")
-                self.isMain = True
-        if(element.tag == "assign"):
+            if element.attrib['parent'] in CLASS_ID:
+                if(element.attrib['name'] == "Main"):
+                    if(self.isMain):
+                        self.errNum = Error.SEMERRMAIN.value
+                    self.isMain = True
+                else:
+                    self.atribut_name = element.attrib['name'] 
+                self.LastNameOfClass = element.attrib['name'] 
+            else:
+                self.errNum = Error.SEMERRUNDEF.value
+        elif(element.tag == "method"):
+            if((element.attrib['selector'] == "run") and self.isMain):
+                self.isRun = True
+            self.atribut_name = element.attrib['selector'] 
+        elif(element.tag == "assign"):
             self.isInsideSend = False
+            self.isEnableToDefVar = True
         elif(element.tag == "send"):
             self.isInsideSend = True
             self.atribut_name = element.attrib['selector'] 
-        elif(element.tag == "method"):
-            if(element.attrib['selector'] == "run"):
-                self.isRun = True
-            self.atribut_name = element.attrib['selector'] 
+            if((element.attrib['selector'] in methodsInClass[self.LastNameOfClass]) == False):
+                self.errNum = Error.SEMERRUNDEF.value
         elif(element.tag == "parameter"):
+            self.defined_vars.append(element.attrib['name'])
             self.atribut_name = element.attrib['name'] 
         elif(element.tag == "literal"):
             if(element.attrib['value'] != "nil" and element.attrib['value'] != "false" and element.attrib['value'] != "true"):
@@ -273,9 +311,16 @@ class Visitor_xml:
         elif(element.tag == "var"):
             if(((element.attrib['name'] == "self") and (self.isInsideSend == False)) or (element.attrib['name'] != "self")):
                 self.atribut_name = element.attrib['name'] 
-        
+            if(self.isEnableToDefVar):
+                self.defined_vars.append(element.attrib['name'])
+                self.isEnableToDefVar = False
+            elif(((element.attrib['name'] in self.defined_vars) == False) and (element.attrib['name'] != "self")):
+                self.errNum = Error.SEMERRUNDEF.value
+                
         if self.atribut_name in KEYWORDS :
             raise SyntacticException("ERROR")
+        elif(self.errNum != 0):
+            raise SemanticException("ERROR")
         
         for child in element:
             self.traverse(child)
@@ -291,8 +336,23 @@ def print_err_by_errnum(value):
         case Error.LEXERR.value:
             sys.stderr.write("- lexikalni chyba ve zdrojovem kodu v SOL25\n")
             return value
-        case Error.SEMERRMAIN.value | Error.SEMERRUNDEF.value | Error.SEMERRARIT.value | Error.SEMERRCOLLISION.value | Error.SEMERR.value:
-            sys.stderr.write("- syntakticka chyba ve zdrojovem kodu v SOL25\n")
+        case Error.SYNTERR.value:
+            sys.stderr.write("- syntaktická chyba ve zdrojovém kódu v SOL25\n")
+            return value
+        case Error.SEMERRMAIN.value:
+            sys.stderr.write("- sémantická chyba - chybějící třída Main či její instanční metoda run.\n")
+            return value
+        case Error.SEMERRUNDEF.value:
+            sys.stderr.write("- sémantická chyba - použití nedefinované (a tedy i neinicializované) proměnné, formálního parametru, třídy, nebo třídní metody.\n")
+            return value
+        case Error.SEMERRARIT.value:
+            sys.stderr.write("- sémantická chyba arity (špatná arita bloku přiřazeného k selektoru při definici instanční\n")
+            return value
+        case Error.SEMERRCOLLISION.value:
+            sys.stderr.write("- sémantická chyba - kolizní proměnná (lokální proměnná koliduje s formálním parametrem bloku\n")
+            return value
+        case Error.SEMERR.value:
+            sys.stderr.write("- sémantická chyba - ostatní\n")
             return value
         case Error.INTERNERR.value:
             sys.stderr.write("- interni chyba (neovlivnena integraci, vstupnimi soubory ci parametry prikazove radky)\n")
@@ -353,19 +413,25 @@ def main():
         except:
             first_comment = ""
         
+        # First preview of AST for save important information
+        visitor = PrintVisitor()
+        visitor.visit(tree)
+        
+        # Transform AST into XML
         transformer = TreeToXML(first_comment)
         xml_tree = transformer.transform(tree)
         xml_str = ET.tostring(xml_tree, encoding="unicode")
         
+        # Check XML for syntax and semantics
         visitor = Visitor_xml()
-            
         visitor.traverse(xml_tree)
+        
         if((visitor.isMain == False) or (visitor.isRun == False)):
             sys.exit(print_err_by_errnum(Error.SEMERRMAIN.value))
     except SyntacticException:
         sys.exit(print_err_by_errnum(Error.SYNTERR.value))
     except SemanticException:
-        sys.exit(print_err_by_errnum(Error.SEMERR.value))
+        sys.exit(print_err_by_errnum(visitor.errNum))
     # except :
     #     sys.exit(print_err_by_errnum(Error.INTERNERR.value) 
         
