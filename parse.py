@@ -6,7 +6,7 @@ from lark import Lark, UnexpectedCharacters, UnexpectedToken, Transformer, Visit
 from collections import defaultdict
 
 # If debug set it to True
-isdebug = False
+isdebug = False 
 # If it is not set input file will be from first argument
 input_file = ""
 
@@ -75,8 +75,8 @@ grammar = """
     expr_base: id | cid | str_def | int_def | "(" expr ")" | block
     expr_tail: id | (id_dot expr_base)*
 
-    cid: /[a-zA-Z][a-zA-Z0-9_]*/ 
-    id: /[a-zA-Z_][a-zA-Z0-9_]*/
+    cid: /[A-Z][a-zA-Z0-9_]*/ 
+    id: /[a-z_][a-zA-Z0-9_]*/
     id_dot:/[a-zA-Z_][a-zA-Z0-9_]*:/
 
     int_def : /-?\d+([eE][+-]?\d+)?/
@@ -148,14 +148,16 @@ class TreeToXML(Transformer):
 
     def class_def(self, args):
         class_element = args[2] 
+        str_name, str_type = args[0]
+        str_name_par, str_type_par = args[1]
         class_element.attrib = {
-            "name": args[0],
-            "parent": args[1]
+            "name": str_name,
+            "parent": str_name_par
         }
         return class_element
 
     def cid(self, args):
-        return args[0]
+        return args[0], "class"
     
     def id(self, args):
         if(str(args[0]) == "nil"):
@@ -346,9 +348,7 @@ class PrintVisitor(Visitor):
             obj = FALSE_TRUE()
         else:
             for key, values in InheritanceRelations.items():
-                print(f"{key} == {tree.children[1].children[0]}")
                 if(tree.children[1].children[0] == key):
-                    print(f"{key}: {values}")
                     sys.exit(print_err_by_errnum(Error.SEMERR.value))
             InheritanceRelations[self.LastNameOfClass].append(tree.children[1].children[0])
         
@@ -379,7 +379,22 @@ class PrintVisitor(Visitor):
             if(len(tree.children[i+1].children[0].children) != numOfParams[sel_str]):
                 sys.exit(print_err_by_errnum(Error.SEMERRARIT.value))
             i += 2
-            
+    
+    def block(self, tree):
+        parameters = []
+        for item in tree.children[0].children:
+            if((item.children[0] in parameters) == False):
+                parameters.append(item.children[0])
+            else:
+                sys.exit(print_err_by_errnum(Error.SEMERRCOLLISION.value))
+        
+        # I made this because of problem with children 
+        for item in tree.children[1].children:
+            if(item.children[0] in parameters):
+                sys.exit(print_err_by_errnum(Error.SEMERRCOLLISION.value))
+            else:
+                break
+                
 class Visitor_xml:
     def __init__(self):
         self.isInsideSend = False
@@ -399,7 +414,7 @@ class Visitor_xml:
         self.atribut_name = ""
         # print(f"Element = {element.tag}")
         if(element.tag == "class"):
-            if element.attrib['parent'] in CLASS_ID:
+            if (element.attrib['parent'] in CLASS_ID):
                 if(element.attrib['name'] == "Main"):
                     if(self.isMain):
                         self.errNum = Error.SEMERRMAIN.value

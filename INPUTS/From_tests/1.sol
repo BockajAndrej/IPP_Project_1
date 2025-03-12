@@ -1,5 +1,5 @@
 class Main : Object {
-            run [| 
-                x := Integer from: 1.
+            run [|
+                x := MyInt1 new.
             ]
         }
