@@ -13,7 +13,48 @@ input_file = ""
 KEYWORDS = {"super", "nil", "class", "self", "true", "false", "main", "Main"}
 CLASS_ID = {"Object", "Nil", "True", "False", "Integer", "String", "Block"}
 
+class OBJECT:
+    def __init__(self):
+        self.methods = {"identicalTo:", "equalTo:", "asString", "isNumber", "isString", "isBlock", "isNil", "new", "from"}
+    
+    def contain(self, value):
+        return value in self.methods
+class NIL(OBJECT):
+    def __init__(self):
+        super().__init__()
+class INTEGER(OBJECT):
+    def __init__(self):
+        super().__init__()
+        self.methods.add("greaterThan:")
+        self.methods.add("plus:")
+        self.methods.add("minus:")
+        self.methods.add("multiplyBy:")
+        self.methods.add("divBy:")
+        self.methods.add("asInteger")
+        self.methods.add("timesRepeat:")
+class STRING(OBJECT):
+    def __init__(self):
+        super().__init__()
+        self.methods.add("read")
+        self.methods.add("print")
+        self.methods.add("asInteger")
+        self.methods.add("concatenateWith:")
+        self.methods.add("startsWith:endsBefore:")
+class BLOCK(OBJECT):
+    def __init__(self):
+        super().__init__()
+        self.methods.add("whileTrue:")
+class FALSE_TRUE(OBJECT):
+    def __init__(self):
+        super().__init__()
+        self.methods.add("not")
+        self.methods.add("and:")
+        self.methods.add("or:")
+        self.methods.add("ifTrue:ifFalse:")
+
 methodsInClass = defaultdict(list)
+numOfParams = defaultdict(list)
+InheritanceRelations = defaultdict(list)
 
 grammar = """
     ?start: program
@@ -204,6 +245,10 @@ class TreeToXML(Transformer):
         else:
             element.append(args[0])
         i = 0
+        
+        # Checking arity for send 
+        if((numOfParams[str_tail] != len(elem_tail)) and (len(numOfParams[str_tail]) != 0)):
+            sys.exit(print_err_by_errnum(Error.SEMERRARIT.value))
         while i < len(elem_tail):
             element_arg = ET.Element("arg", {"order": str(i+1)})
             specific_elem_tail = elem_tail[i]
@@ -251,6 +296,30 @@ class CommentTree(Transformer):
 class PrintVisitor(Visitor):        
     def class_def(self, tree):
         self.LastNameOfClass = str(tree.children[0].children[0].value)
+        
+        if(self.LastNameOfClass == "Main"):
+            obj = OBJECT()
+            for item in obj.methods:
+                methodsInClass[item].append("Object")
+            obj = NIL()
+            for item in obj.methods:
+                methodsInClass[item].append("Nil")
+            obj = INTEGER()
+            for item in obj.methods:
+                methodsInClass[item].append("Integer")
+            obj = STRING()
+            for item in obj.methods:
+                methodsInClass[item].append("String")
+            obj = BLOCK()
+            for item in obj.methods:
+                methodsInClass[item].append("Block")
+            obj = FALSE_TRUE()
+            for item in obj.methods:
+                methodsInClass[item].append("True")
+                methodsInClass[item].append("False")
+                
+        if(self.LastNameOfClass in CLASS_ID):
+            sys.exit(print_err_by_errnum(Error.SEMERR.value))
         CLASS_ID.add(self.LastNameOfClass)
         i = 0
         while i < int(len(tree.children[2].children)):
@@ -259,9 +328,58 @@ class PrintVisitor(Visitor):
             while iter < len(tree.children[2].children[i].children):
                 sel_str = f"{sel_str}{tree.children[2].children[i].children[iter].children[0].value}"
                 iter+=1
-            methodsInClass[self.LastNameOfClass].append(sel_str)
+            methodsInClass[sel_str].append(self.LastNameOfClass)
             i+=2
         
+        obj = 0
+        if(tree.children[1].children[0] == "Object"):
+            obj = OBJECT()
+        elif(tree.children[1].children[0] == "Nil"):
+            obj = NIL()
+        elif(tree.children[1].children[0] == "Integer"):
+            obj = INTEGER()
+        elif(tree.children[1].children[0] == "String"):
+            obj = STRING()
+        elif(tree.children[1].children[0] == "Block"):
+            obj = BLOCK()
+        elif((tree.children[1].children[0] == "True") or (tree.children[1].children[0] == "False")):
+            obj = FALSE_TRUE()
+        else:
+            for key, values in InheritanceRelations.items():
+                print(f"{key} == {tree.children[1].children[0]}")
+                if(tree.children[1].children[0] == key):
+                    print(f"{key}: {values}")
+                    sys.exit(print_err_by_errnum(Error.SEMERR.value))
+            InheritanceRelations[self.LastNameOfClass].append(tree.children[1].children[0])
+        
+        if(obj == 0):
+            for item in methodsInClass:
+                if(tree.children[1].children[0] in methodsInClass[item]):
+                    methodsInClass[item].append(self.LastNameOfClass)
+        else:    
+            for item in obj.methods:
+                methodsInClass[item].append(self.LastNameOfClass)
+     
+    def method(self, tree):
+        i = 0
+        while i < len(tree.children):
+            iter = 0
+            numberOfParams = 0
+            sel_str = ""
+            while iter < len(tree.children[i].children):
+                if(str(tree.children[i].children[iter].data) == "id_dot"):
+                    sel_str = f"{sel_str}{tree.children[i].children[iter].children[0]}"
+                    numberOfParams += 1
+                iter+=1
+            if(sel_str == ""):
+                sel_str = str(tree.children[i].children[0].children[0])
+            numOfParams[sel_str] = numberOfParams
+            # print(f"{sel_str} + {iter}")
+            
+            if(len(tree.children[i+1].children[0].children) != numOfParams[sel_str]):
+                sys.exit(print_err_by_errnum(Error.SEMERRARIT.value))
+            i += 2
+            
 class Visitor_xml:
     def __init__(self):
         self.isInsideSend = False
@@ -269,6 +387,7 @@ class Visitor_xml:
         self.isRun = False
         
         self.LastNameOfClass = ""
+        self.LastNameOfMethod = ""
         
         self.defined_vars = []
         self.isEnableToDefVar = False
@@ -300,14 +419,18 @@ class Visitor_xml:
         elif(element.tag == "send"):
             self.isInsideSend = True
             self.atribut_name = element.attrib['selector'] 
-            if((element.attrib['selector'] in methodsInClass[self.LastNameOfClass]) == False):
-                self.errNum = Error.SEMERRUNDEF.value
+            self.LastNameOfMethod = element.attrib['selector'] 
         elif(element.tag == "parameter"):
             self.defined_vars.append(element.attrib['name'])
             self.atribut_name = element.attrib['name'] 
         elif(element.tag == "literal"):
             if(element.attrib['value'] != "nil" and element.attrib['value'] != "false" and element.attrib['value'] != "true"):
                 self.atribut_name = element.attrib['value'] 
+            # print(f"method: {self.LastNameOfMethod} class:{methodsInClass[self.LastNameOfMethod]}")
+            if((element.attrib['class'] == "class")):
+                if(((element.attrib['value'] in methodsInClass[self.LastNameOfMethod]) == False)):
+                    self.errNum = Error.SEMERRUNDEF.value                
+                    
         elif(element.tag == "var"):
             if(((element.attrib['name'] == "self") and (self.isInsideSend == False)) or (element.attrib['name'] != "self")):
                 self.atribut_name = element.attrib['name'] 
@@ -367,7 +490,7 @@ def print_helping_guide():
 def main():
     global isdebug
     global input_file
-    
+        
     if (isdebug):
         if(input_file == ""):
             input_file = sys.argv[1]
@@ -398,6 +521,8 @@ def main():
         sys.exit(print_err_by_errnum(Error.SYNTERR.value))
     except:
         sys.exit(print_err_by_errnum(Error.INTERNERR.value))
+        
+    errNumber = 0
 
     # Helps to have overview over the AST
     if(isdebug):
@@ -433,7 +558,7 @@ def main():
     except SemanticException:
         sys.exit(print_err_by_errnum(visitor.errNum))
     # except :
-    #     sys.exit(print_err_by_errnum(Error.INTERNERR.value) 
+    #     sys.exit(print_err_by_errnum(Error.INTERNERR.value))
         
     # Print XML into stdio
     print(xml_str)

@@ -1,3 +1,5 @@
-class Main : Object {run [|]}
-        class Main2 : Object {run3 [|]
-            run4 [|]}
+class Main : Object {
+            run [| 
+                x := Integer from: 1.
+            ]
+        }
