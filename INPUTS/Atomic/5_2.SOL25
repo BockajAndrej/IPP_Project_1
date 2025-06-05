@@ -1,0 +1,6 @@
+class Main : Object {
+    compute:and:and:
+        [ :x :y :z |
+            a := x plus: y.
+        ]
+}

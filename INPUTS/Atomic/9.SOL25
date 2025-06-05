@@ -1,0 +1,9 @@
+class Main : Object {
+    run [ | x := self compute: 3 and: 2 and: 5.]
+    compute:and:and: "<- definice metody - selektor se třemi parametry"
+        [ :x :y :z |
+            _ := ((self vysl) greaterThan: 0) 
+            ifTrue: [|u := self vysl: 1.]
+            ifFalse: [|].
+        ]
+}

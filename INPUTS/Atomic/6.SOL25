@@ -1,0 +1,4 @@
+"zaslání zprávy 'compute:and:and:' sobě samému - selektor se dvěma arg."
+
+"zaslání zprávy 'plusOne:' sobě samému - selektor s jedním arg.
+Argumentem je výsledek po zaslání zprávy 'vysl' objektu self."

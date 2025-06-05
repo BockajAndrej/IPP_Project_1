@@ -1,0 +1,6 @@
+class Main : Object {
+    run "<- definice metody - bezparametrický selektor run"
+        [ |
+            x := self plusOne: (self vysl).
+        ]
+}
